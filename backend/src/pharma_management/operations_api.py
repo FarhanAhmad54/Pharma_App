@@ -19,11 +19,11 @@ from pharma_management.models import (
     InventoryMovement,
     Invoice,
     MovementType,
+    SalesOrder,
     Shipment,
     ShipmentStatus,
     User,
     UserRole,
-    Warehouse,
 )
 from pharma_management.security import current_user, require_roles
 
@@ -129,8 +129,7 @@ def create_return(data: ReturnCreate, db: Session = Depends(get_db), user: User 
         raise HTTPException(409, "Return number already exists")
     if not db.get(Customer, data.customer_id):
         raise HTTPException(404, "Customer not found")
-    invoice = db.get(Invoice, data.invoice_id)
-    if not invoice:
+    if not db.get(Invoice, data.invoice_id):
         raise HTTPException(404, "Invoice not found")
     batch = db.scalar(select(Batch).where(Batch.id == data.batch_id).with_for_update())
     if not batch or batch.product_id != data.product_id:
@@ -139,6 +138,7 @@ def create_return(data: ReturnCreate, db: Session = Depends(get_db), user: User 
         raise HTTPException(409, "Return quantity exceeds quantity sold from batch")
     result = ReturnOrder(**data.model_dump(), created_by=user.id)
     db.add(result)
+    db.flush()
     db.add(
         AuditLog(
             user_id=user.id,
@@ -158,7 +158,7 @@ def create_shipment(data: ShipmentCreate, db: Session = Depends(get_db)) -> Ship
     shipment_number = data.shipment_number or f"SHP-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:8].upper()}"
     if db.scalar(select(Shipment).where(Shipment.shipment_number == shipment_number)):
         raise HTTPException(409, "Shipment number already exists")
-    if data.sales_order_id and not db.execute(select(1).where(__import__('pharma_management.models', fromlist=['SalesOrder']).SalesOrder.id == data.sales_order_id)).first():
+    if data.sales_order_id and not db.get(SalesOrder, data.sales_order_id):
         raise HTTPException(404, "Sales order not found")
     if data.tracking_number and db.scalar(select(Shipment).where(Shipment.tracking_number == data.tracking_number)):
         raise HTTPException(409, "Tracking number already exists")
