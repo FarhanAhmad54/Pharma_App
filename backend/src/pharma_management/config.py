@@ -40,8 +40,15 @@ class Settings(BaseSettings):
                 raise ValueError("JWT_SECRET must be at least 32 characters outside testing")
             if self.access_token_minutes < 5 or self.access_token_minutes > 120:
                 raise ValueError("ACCESS_TOKEN_MINUTES must be between 5 and 120")
-            if self.environment == "production" and self.enable_docs:
-                raise ValueError("ENABLE_DOCS must be false in production")
+            if self.environment == "production":
+                if self.enable_docs:
+                    raise ValueError("ENABLE_DOCS must be false in production")
+                if "*" in self.cors_origins:
+                    raise ValueError("CORS_ORIGINS cannot contain '*' in production")
+                if "*" in self.trusted_hosts:
+                    raise ValueError("TRUSTED_HOSTS cannot contain '*' in production")
+                if self.database_statement_timeout_ms < 1000:
+                    raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS is too low for production")
         return self
 
 
