@@ -45,3 +45,5 @@ jobs:
       - run: pyright src tests
       - run: alembic upgrade head
       - run: pytest -q
+      - name: Build container image
+        run: docker build --tag pharma-management-api:ci .
