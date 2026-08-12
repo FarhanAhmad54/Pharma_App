@@ -10,6 +10,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pharma_management.auth_models import AuthSession
 from pharma_management.config import get_settings
 from pharma_management.db import get_db
 from pharma_management.inventory_operations import complete_production, create_sale, transfer_stock
@@ -55,31 +56,15 @@ from pharma_management.security import (
     require_roles,
     revoke_session,
 )
-from pharma_management.services import (
-    record_qc,
-    release_batch,
-    transition_production,
-    update_product,
-)
+from pharma_management.services import record_qc, release_batch, transition_production, update_product
 
 settings = get_settings()
 docs_enabled = settings.enable_docs and settings.environment != "production"
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    docs_url="/docs" if docs_enabled else None,
-    redoc_url="/redoc" if docs_enabled else None,
-)
+app = FastAPI(title=settings.app_name, version=settings.app_version, docs_url="/docs" if docs_enabled else None, redoc_url="/redoc" if docs_enabled else None)
 app.add_middleware(RequestContextMiddleware)
 if settings.trusted_hosts != ["*"]:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"])
 
 
 @app.middleware("http")
@@ -134,6 +119,30 @@ def logout(request: Request, db: Session = Depends(get_db), _user: User = Depend
         revoke_session(db, token)
 
 
+@router.get("/auth/sessions")
+def sessions(db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[dict[str, Any]]:
+    rows = db.scalars(select(AuthSession).where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None), AuthSession.expires_at > datetime.now(UTC)).order_by(AuthSession.created_at.desc())).all()
+    return [{"id": str(row.id), "created_at": row.created_at, "expires_at": row.expires_at, "ip_address": row.ip_address, "user_agent": row.user_agent} for row in rows]
+
+
+@router.delete("/auth/sessions/{session_id}", status_code=204)
+def revoke_session_by_id(session_id: UUID, db: Session = Depends(get_db), user: User = Depends(current_user)) -> None:
+    session = db.scalar(select(AuthSession).where(AuthSession.id == session_id, AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None)))
+    if not session:
+        raise HTTPException(404, "Session not found")
+    session.revoked_at = datetime.now(UTC)
+    db.commit()
+
+
+@router.delete("/auth/sessions", status_code=204)
+def revoke_all_sessions(db: Session = Depends(get_db), user: User = Depends(current_user)) -> None:
+    now = datetime.now(UTC)
+    rows = db.scalars(select(AuthSession).where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))).all()
+    for session in rows:
+        session.revoked_at = now
+    db.commit()
+
+
 @router.get("/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user)) -> User:
     return user
@@ -142,7 +151,6 @@ def me(user: User = Depends(current_user)) -> User:
 @router.post("/products", response_model=ProductOut, status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.INVENTORY_MANAGER))])
 def product_create(data: ProductCreate, db: Session = Depends(get_db), user: User = Depends(current_user)) -> Product:
     from pharma_management.services import create_product
-
     return create_product(db, data, user)
 
 
@@ -192,7 +200,6 @@ def warehouses(db: Session = Depends(get_db), _: User = Depends(current_user)) -
 @router.post("/production-orders", response_model=ProductionOut, status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.PRODUCTION_MANAGER))])
 def production_create(data: ProductionCreate, db: Session = Depends(get_db), user: User = Depends(current_user)) -> ProductionOrder:
     from pharma_management.services import create_production
-
     return create_production(db, data, user)
 
 
@@ -210,7 +217,6 @@ def production_transition(target: ProductionStatus):
         if not order:
             raise HTTPException(404, "Production order not found")
         return transition_production(db, order, target, user)
-
     return endpoint
 
 
