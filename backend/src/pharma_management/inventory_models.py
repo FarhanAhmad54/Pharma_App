@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Numeric, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,7 @@ class BatchInventory(Base):
         UniqueConstraint("batch_id", "warehouse_id", name="uq_batch_inventory_batch_warehouse"),
         Index("ix_batch_inventory_product_warehouse", "product_id", "warehouse_id"),
         Index("ix_batch_inventory_batch", "batch_id"),
+        CheckConstraint("quantity_available >= 0 and quantity_reserved >= 0", name="ck_batch_inventory_quantities_nonnegative"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
