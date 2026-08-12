@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from pharma_management.config import get_settings
 from pharma_management.db import Base
 from pharma_management import models  # noqa: F401
+from pharma_management import extended_models  # noqa: F401
 
 config = context.config
 settings = get_settings()
