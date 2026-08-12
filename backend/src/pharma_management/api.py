@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
@@ -47,16 +48,12 @@ from pharma_management.security import (
     verify_password,
 )
 from pharma_management.services import (
-    complete_production,
-    create_product,
-    create_production,
-    create_sale,
     record_qc,
     release_batch,
-    transfer_stock,
     transition_production,
     update_product,
 )
+from pharma_management.inventory_operations import complete_production, create_sale, transfer_stock
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0", docs_url="/docs", redoc_url="/redoc")
@@ -92,7 +89,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)) -> TokenOut:
     if not user or not user.active or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Invalid email or password")
     token, expires = create_access_token(user)
-    return TokenOut(access_token=token, expires_in=expires, user=user)
+    return TokenOut(access_token=token, expires_in=expires, user=UserOut.model_validate(user))
 
 
 @router.get("/auth/me", response_model=UserOut)
@@ -102,6 +99,8 @@ def me(user: User = Depends(current_user)) -> User:
 
 @router.post("/products", response_model=ProductOut, status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.INVENTORY_MANAGER))])
 def product_create(data: ProductCreate, db: Session = Depends(get_db), user: User = Depends(current_user)) -> Product:
+    from pharma_management.services import create_product
+
     return create_product(db, data, user)
 
 
@@ -150,6 +149,8 @@ def warehouses(db: Session = Depends(get_db), _: User = Depends(current_user)) -
 
 @router.post("/production-orders", response_model=ProductionOut, status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.PRODUCTION_MANAGER))])
 def production_create(data: ProductionCreate, db: Session = Depends(get_db), user: User = Depends(current_user)) -> ProductionOrder:
+    from pharma_management.services import create_production
+
     return create_production(db, data, user)
 
 
@@ -162,11 +163,12 @@ def production_list(status: ProductionStatus | None = None, db: Session = Depend
 
 
 def production_transition(target: ProductionStatus):
-    def endpoint(order_id: UUID, db: Session = Depends(get_db), user: User = Depends(current_user)) -> ProductionOut:
+    def endpoint(order_id: UUID, db: Session = Depends(get_db), user: User = Depends(current_user)) -> Any:
         order = db.get(ProductionOrder, order_id)
         if not order:
             raise HTTPException(404, "Production order not found")
         return transition_production(db, order, target, user)
+
     return endpoint
 
 
@@ -218,7 +220,7 @@ def batch_release(batch_id: UUID, db: Session = Depends(get_db), user: User = De
 
 
 @router.post("/customers", status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.SALES_MANAGER))])
-def customer_create(data: dict, db: Session = Depends(get_db)) -> dict:
+def customer_create(data: dict[str, Any], db: Session = Depends(get_db)) -> dict[str, Any]:
     required = {"name", "code"}
     if not required.issubset(data):
         raise HTTPException(422, "name and code are required")
