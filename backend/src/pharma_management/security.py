@@ -1,11 +1,10 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pharma_management.config import get_settings
@@ -27,7 +26,7 @@ def verify_password(password: str, hashed: str) -> bool:
 def create_access_token(user: User) -> tuple[str, int]:
     settings = get_settings()
     expires = timedelta(minutes=settings.access_token_minutes)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {"sub": str(user.id), "role": user.role.value, "iat": now, "exp": now + expires}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm), int(expires.total_seconds())
 
@@ -38,8 +37,8 @@ def current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) ->
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         user_id = UUID(str(payload.get("sub")))
-    except (jwt.PyJWTError, ValueError, TypeError):
-        raise credentials_error
+    except (jwt.PyJWTError, ValueError, TypeError) as exc:
+        raise credentials_error from exc
     user = db.get(User, user_id)
     if not user or not user.active:
         raise credentials_error
