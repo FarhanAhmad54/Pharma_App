@@ -3,6 +3,7 @@ import { Activity, BarChart3, Bell, BriefcaseBusiness, ChevronDown, CircleHelp, 
 import { AdminWorkspace } from './admin'
 import { CommercialWorkspace } from './commercial'
 import { ModulePage } from './modules'
+import { ProductionControlPanel } from './production-panel'
 import { ProductionOrderModal, TransferModal } from './workflow-modals'
 import { api, getToken, setToken, type Batch, type Product, type Sale, type User, type Warehouse } from './lib/api'
 
@@ -104,7 +105,7 @@ function App() {
         {activeModule === 'Commercial' ? <CommercialWorkspace products={products} batches={batches} warehouses={warehouses} sales={sales} onRefresh={refreshData} notice={setNotice} />
           : activeModule === 'Admin' ? <AdminWorkspace warehouses={warehouses} products={products} notice={setNotice} />
           : activeModule !== 'Operations' ? <ModulePage module={activeModule} products={products} batches={batches} warehouses={warehouses} sales={sales} onRefresh={refreshData} notice={setNotice} />
-          : <OperationsDashboard products={products} batches={batches} warehouses={warehouses} selectedWarehouse={selectedWarehouse} activeBatches={activeBatches} pendingQc={pendingQc} inventoryUnits={inventoryUnits} salesValue={salesValue} filteredBatches={filteredBatches} search={search} setSearch={setSearch} onProduction={() => setWorkflowModal('production')} onTransfer={() => setWorkflowModal('transfer')} />}
+          : <><OperationsDashboard products={products} batches={batches} warehouses={warehouses} selectedWarehouse={selectedWarehouse} activeBatches={activeBatches} pendingQc={pendingQc} inventoryUnits={inventoryUnits} salesValue={salesValue} filteredBatches={filteredBatches} search={search} setSearch={setSearch} onProduction={() => setWorkflowModal('production')} onTransfer={() => setWorkflowModal('transfer')} /><ProductionControlPanel onRefresh={refreshData} notice={setNotice} /></>}
       </div>
     </main>
     {notice && <div className="toast"><Activity size={16} />{notice}<button onClick={() => setNotice('')}><X size={15} /></button></div>}
