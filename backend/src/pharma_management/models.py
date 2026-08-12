@@ -130,8 +130,7 @@ class ProductionOrder(Base):
     __table_args__ = (
         UniqueConstraint("order_number", name="uq_production_order_number"),
         Index("ix_production_orders_status", "status"),
-        CheckConstraint("planned_quantity > 0", name="ck_production_quantities"),
-        CheckConstraint("actual_quantity >= 0", name="ck_production_actual_nonnegative"),
+        CheckConstraint("planned_quantity > 0 and actual_quantity >= 0 and actual_quantity <= planned_quantity", name="ck_production_quantities"),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_number: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -158,7 +157,7 @@ class Batch(Base):
     __table_args__ = (
         UniqueConstraint("batch_number", name="uq_batches_number"),
         Index("ix_batches_product_expiry", "product_id", "expiry_date"),
-        CheckConstraint("quantity_produced >= 0 AND quantity_available >= 0 AND quantity_reserved >= 0 AND quantity_sold >= 0 AND quantity_rejected >= 0", name="ck_batches_quantities_nonnegative"),
+        CheckConstraint("quantity_produced >= 0 and quantity_available >= 0 and quantity_reserved >= 0 and quantity_sold >= 0 and quantity_rejected >= 0", name="ck_batches_quantities_nonnegative"),
         CheckConstraint("quantity_available + quantity_reserved + quantity_sold + quantity_rejected <= quantity_produced", name="ck_batches_quantity_conservation"),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -224,7 +223,7 @@ class SalesOrder(Base):
     __tablename__ = "sales_orders"
     __table_args__ = (
         UniqueConstraint("order_number", name="uq_sales_order_number"),
-        CheckConstraint("subtotal >= 0 AND tax_amount >= 0 AND total_amount >= 0", name="ck_sales_totals_nonnegative"),
+        CheckConstraint("subtotal >= 0 and tax_amount >= 0 and total_amount >= 0", name="ck_sales_totals_nonnegative"),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_number: Mapped[str] = mapped_column(String(64), nullable=False)
