@@ -80,10 +80,11 @@ def dispatch_shipment(
             raise HTTPException(409, "Allocated batch stock no longer exists")
         if batch.status != BatchStatus.RELEASED:
             raise HTTPException(409, "Allocated batch is no longer released")
-        if stock.quantity_reserved < allocation.quantity:
+        if stock.quantity_reserved < allocation.quantity or batch.quantity_reserved < allocation.quantity:
             raise HTTPException(409, "Reserved quantity is inconsistent")
 
         stock.quantity_reserved -= allocation.quantity
+        batch.quantity_reserved -= allocation.quantity
         batch.quantity_sold += allocation.quantity
         db.add(
             ShipmentItem(
@@ -125,8 +126,10 @@ def deliver_shipment(
         raise HTTPException(404, "Shipment not found")
     if shipment.status != ShipmentStatus.DISPATCHED:
         raise HTTPException(409, "Only dispatched shipments can be delivered")
-    order = db.get(SalesOrder, shipment.sales_order_id) if shipment.sales_order_id else None
+    order = db.scalar(select(SalesOrder).where(SalesOrder.id == shipment.sales_order_id).with_for_update()) if shipment.sales_order_id else None
     if order:
+        if order.status != OrderStatus.DISPATCHED:
+            raise HTTPException(409, "Sales order must be DISPATCHED before delivery")
         order.status = OrderStatus.DELIVERED
     shipment.status = ShipmentStatus.DELIVERED
     shipment.delivery_date = shipment.delivery_date or datetime.now(timezone.utc)
