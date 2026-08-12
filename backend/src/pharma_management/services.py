@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pharma_management.models import (
@@ -83,13 +83,7 @@ def complete_production(db: Session, order: ProductionOrder, data: CompleteProdu
         raise HTTPException(409, "Batch number already exists")
     if data.actual_quantity > order.planned_quantity:
         raise HTTPException(422, "Actual quantity cannot exceed planned quantity")
-    batch = Batch(
-        batch_number=data.batch_number, product_id=order.product_id, production_order_id=order.id,
-        warehouse_id=order.warehouse_id, manufacturing_date=data.manufacturing_date,
-        expiry_date=data.expiry_date, quantity_produced=data.actual_quantity,
-        quantity_available=data.actual_quantity, status=BatchStatus.QUARANTINED,
-        qc_status=QCStatus.PENDING,
-    )
+    batch = Batch(batch_number=data.batch_number, product_id=order.product_id, production_order_id=order.id, warehouse_id=order.warehouse_id, manufacturing_date=data.manufacturing_date, expiry_date=data.expiry_date, quantity_produced=data.actual_quantity, quantity_available=data.actual_quantity, status=BatchStatus.QUARANTINED, qc_status=QCStatus.PENDING)
     order.actual_quantity = data.actual_quantity
     order.completed_at = datetime.now(timezone.utc)
     order.status = ProductionStatus.COMPLETED
