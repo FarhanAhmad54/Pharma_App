@@ -29,6 +29,7 @@ from pharma_management.models import (
     ShipmentStatus,
     User,
     UserRole,
+    Warehouse,
 )
 from pharma_management.security import current_user, require_roles
 
@@ -149,20 +150,12 @@ def create_return(data: ReturnCreate, db: Session = Depends(get_db), user: User 
     item = db.scalar(select(SalesItem).where(SalesItem.sales_order_id == order.id, SalesItem.product_id == data.product_id))
     if not item:
         raise HTTPException(409, "Returned product was not part of the invoiced order")
-
     batch = db.scalar(select(Batch).where(Batch.id == data.batch_id).with_for_update())
     if not batch or batch.product_id != data.product_id:
         raise HTTPException(409, "Returned batch does not match product")
-    returned = db.scalar(
-        select(func.coalesce(func.sum(ReturnOrder.quantity), 0)).where(
-            ReturnOrder.invoice_id == data.invoice_id,
-            ReturnOrder.product_id == data.product_id,
-            ReturnOrder.batch_id == data.batch_id,
-        )
-    ) or Decimal("0")
+    returned = db.scalar(select(func.coalesce(func.sum(ReturnOrder.quantity), 0)).where(ReturnOrder.invoice_id == data.invoice_id, ReturnOrder.product_id == data.product_id, ReturnOrder.batch_id == data.batch_id)) or Decimal("0")
     if returned + data.quantity > batch.quantity_sold:
         raise HTTPException(409, "Return quantity exceeds remaining sold quantity for this batch")
-
     result = ReturnOrder(**data.model_dump(), created_by=user.id)
     db.add(result)
     db.flush()
@@ -209,18 +202,11 @@ def create_export(data: ExportCreate, db: Session = Depends(get_db), user: User 
         raise HTTPException(404, "Batch/product not found")
     if batch.status != BatchStatus.RELEASED or batch.expiry_date <= date.today():
         raise HTTPException(409, "Export batch is not eligible")
-    stock = db.scalar(
-        select(BatchInventory).where(
-            BatchInventory.batch_id == data.batch_id,
-            BatchInventory.product_id == data.product_id,
-            BatchInventory.warehouse_id == data.warehouse_id,
-        ).with_for_update()
-    )
+    stock = db.scalar(select(BatchInventory).where(BatchInventory.batch_id == data.batch_id, BatchInventory.product_id == data.product_id, BatchInventory.warehouse_id == data.warehouse_id).with_for_update())
     if not stock:
         raise HTTPException(409, "Export batch stock record not found in selected warehouse")
     if stock.quantity_available < data.quantity or batch.quantity_available < data.quantity:
         raise HTTPException(409, "Insufficient batch stock for export")
-
     export_payload = data.model_dump(exclude={"warehouse_id"})
     export_payload.update({"destination_country": data.destination_country.upper(), "currency": data.currency.upper(), "status": "CONFIRMED", "created_by": user.id})
     export = ExportOrder(**export_payload)
