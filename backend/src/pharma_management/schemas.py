@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from pharma_management.models import BatchStatus, OrderStatus, ProductionStatus, QCStatus, UserRole
 
@@ -20,9 +20,9 @@ class ProductCreate(BaseModel):
     manufacturer: str | None = Field(default=None, max_length=160)
     unit: str = Field(default="unit", max_length=32)
     packaging: str | None = Field(default=None, max_length=160)
-    selling_price: Decimal = Field(default=Decimal("0"), ge=0)
-    cost_price: Decimal = Field(default=Decimal("0"), ge=0)
-    reorder_threshold: Decimal = Field(default=Decimal("0"), ge=0)
+    selling_price: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
+    cost_price: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=2)
+    reorder_threshold: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=3)
 
 
 class ProductUpdate(ProductCreate):
@@ -46,7 +46,7 @@ class UserCreate(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class UserOut(BaseModel):
@@ -69,8 +69,8 @@ class TokenOut(BaseModel):
 class WarehouseCreate(BaseModel):
     code: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=160)
-    location: str | None = None
-    capacity: Decimal | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=255)
+    capacity: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=3)
 
 
 class WarehouseOut(WarehouseCreate):
@@ -82,9 +82,9 @@ class WarehouseOut(WarehouseCreate):
 class ProductionCreate(BaseModel):
     order_number: str = Field(min_length=1, max_length=64)
     product_id: UUID
-    planned_quantity: Decimal = Field(gt=0)
+    planned_quantity: Decimal = Field(gt=0, max_digits=16, decimal_places=3)
     warehouse_id: UUID | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=4000)
 
 
 class ProductionOut(ProductionCreate):
@@ -116,7 +116,7 @@ class BatchOut(BaseModel):
 
 
 class CompleteProductionRequest(BaseModel):
-    actual_quantity: Decimal = Field(gt=0)
+    actual_quantity: Decimal = Field(gt=0, max_digits=16, decimal_places=3)
     batch_number: str = Field(min_length=1, max_length=80)
     manufacturing_date: date
     expiry_date: date
@@ -132,20 +132,28 @@ class QCRequest(BaseModel):
     reference_number: str = Field(min_length=1, max_length=80)
     test_date: date
     result: QCStatus
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=4000)
 
 
 class SaleItemCreate(BaseModel):
     product_id: UUID
-    quantity: Decimal = Field(gt=0)
-    unit_price: Decimal = Field(ge=0)
+    quantity: Decimal = Field(gt=0, max_digits=16, decimal_places=3)
+    unit_price: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
 
 
 class SaleCreate(BaseModel):
     order_number: str = Field(min_length=1, max_length=64)
     customer_id: UUID
     currency: str = Field(default="INR", min_length=3, max_length=3)
-    items: list[SaleItemCreate] = Field(min_length=1)
+    items: list[SaleItemCreate] = Field(min_length=1, max_length=100)
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        normalized = value.upper()
+        if not normalized.isalpha():
+            raise ValueError("currency must be a 3-letter ISO-style code")
+        return normalized
 
 
 class SaleOut(BaseModel):
@@ -159,6 +167,20 @@ class SaleOut(BaseModel):
     created_at: datetime
 
 
+class CustomerCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=180)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=40)
+    address: str | None = Field(default=None, max_length=4000)
+
+
+class CustomerOut(CustomerCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    active: bool
+
+
 class InventorySummary(BaseModel):
     product_id: UUID
     warehouse_id: UUID
@@ -170,5 +192,11 @@ class TransferRequest(BaseModel):
     batch_id: UUID
     from_warehouse_id: UUID
     to_warehouse_id: UUID
-    quantity: Decimal = Field(gt=0)
-    reason: str | None = None
+    quantity: Decimal = Field(gt=0, max_digits=16, decimal_places=3)
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def warehouses_must_differ(self) -> "TransferRequest":
+        if self.from_warehouse_id == self.to_warehouse_id:
+            raise ValueError("Source and destination warehouses must differ")
+        return self
