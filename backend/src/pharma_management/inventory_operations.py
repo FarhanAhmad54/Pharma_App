@@ -95,7 +95,7 @@ def fefo_allocate(
     requested: Decimal,
     user: User,
     reference: str,
-) -> list[BatchInventory]:
+) -> list[tuple[UUID, Decimal]]:
     if requested <= 0:
         raise HTTPException(422, "Requested quantity must be positive")
     if not db.get(Warehouse, warehouse_id):
@@ -117,14 +117,14 @@ def fefo_allocate(
     ).all()
 
     remaining = requested
-    allocations: list[BatchInventory] = []
+    allocations: list[tuple[UUID, Decimal]] = []
     for stock in rows:
         if remaining <= 0:
             break
         quantity = min(stock.quantity_available, remaining)
         stock.quantity_available -= quantity
         stock.quantity_reserved += quantity
-        allocations.append(stock)
+        allocations.append((stock.batch_id, quantity))
         db.add(
             InventoryMovement(
                 product_id=product_id,
@@ -150,6 +150,8 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
         raise HTTPException(404, "Customer not found or inactive")
     if not db.get(Warehouse, warehouse_id):
         raise HTTPException(404, "Warehouse not found")
+    if not data.items:
+        raise HTTPException(422, "A sales order must contain at least one item")
     if db.scalar(select(SalesOrder).where(SalesOrder.order_number == data.order_number)):
         raise HTTPException(409, "Sales order number already exists")
 
@@ -172,6 +174,8 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
             product = db.get(Product, item_data.product_id)
             if not product or not product.active:
                 raise HTTPException(404, f"Product {item_data.product_id} not found or inactive")
+            if item_data.unit_price < 0:
+                raise HTTPException(422, "Unit price cannot be negative")
             item = SalesItem(
                 sales_order_id=order.id,
                 product_id=product.id,
@@ -183,18 +187,14 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
             allocations = fefo_allocate(
                 db, product.id, warehouse_id, item.quantity, user, order.order_number
             )
-            for allocation in allocations:
+            for batch_id, quantity in allocations:
                 db.execute(
                     text(
                         "insert into public.batch_allocations "
                         "(id, sales_item_id, batch_id, quantity) "
                         "values (gen_random_uuid(), :sales_item_id, :batch_id, :quantity)"
                     ),
-                    {
-                        "sales_item_id": item.id,
-                        "batch_id": allocation.batch_id,
-                        "quantity": allocation.quantity_reserved,
-                    },
+                    {"sales_item_id": item.id, "batch_id": batch_id, "quantity": quantity},
                 )
             total += item.quantity * item.unit_price
 
@@ -213,32 +213,28 @@ def transfer_stock(db: Session, data: TransferRequest, user: User) -> None:
         raise HTTPException(422, "Source and destination warehouses must differ")
     if data.quantity <= 0:
         raise HTTPException(422, "Transfer quantity must be positive")
-    if not db.get(Warehouse, data.to_warehouse_id):
-        raise HTTPException(404, "Destination warehouse not found")
+    if not db.get(Warehouse, data.from_warehouse_id) or not db.get(Warehouse, data.to_warehouse_id):
+        raise HTTPException(404, "Source or destination warehouse not found")
 
-    source = db.scalar(
+    # Lock existing source/destination rows in deterministic warehouse order to reduce deadlock risk.
+    existing = db.scalars(
         select(BatchInventory)
         .where(
             BatchInventory.batch_id == data.batch_id,
             BatchInventory.product_id == data.product_id,
-            BatchInventory.warehouse_id == data.from_warehouse_id,
+            BatchInventory.warehouse_id.in_([data.from_warehouse_id, data.to_warehouse_id]),
         )
+        .order_by(BatchInventory.warehouse_id.asc())
         .with_for_update()
-    )
+    ).all()
+    rows = {row.warehouse_id: row for row in existing}
+    source = rows.get(data.from_warehouse_id)
     if not source:
         raise HTTPException(404, "Batch stock not found in source warehouse")
     if source.quantity_available < data.quantity:
         raise HTTPException(409, "Insufficient available batch quantity")
 
-    destination = db.scalar(
-        select(BatchInventory)
-        .where(
-            BatchInventory.batch_id == data.batch_id,
-            BatchInventory.product_id == data.product_id,
-            BatchInventory.warehouse_id == data.to_warehouse_id,
-        )
-        .with_for_update()
-    )
+    destination = rows.get(data.to_warehouse_id)
     if not destination:
         destination = BatchInventory(
             batch_id=data.batch_id,
