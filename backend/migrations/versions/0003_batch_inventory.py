@@ -37,6 +37,30 @@ def upgrade() -> None:
     op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon noinherit; end if; end $$;")
     op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated noinherit; end if; end $$;")
 
+    # UserRole exists in the Python domain model but is not represented by a mapped
+    # SQLAlchemy column in the base metadata. Materialize the PostgreSQL enum so a clean
+    # database can reproduce the authorization schema.
+    op.execute(
+        """
+        do $role$
+        begin
+            if not exists (
+                select 1
+                from pg_type t
+                join pg_namespace n on n.oid = t.typnamespace
+                where n.nspname = 'public' and t.typname = 'user_role'
+            ) then
+                create type public.user_role as enum (
+                    'SUPER_ADMIN', 'ADMIN', 'PRODUCTION_MANAGER', 'QUALITY_MANAGER',
+                    'INVENTORY_MANAGER', 'WAREHOUSE_MANAGER', 'SALES_MANAGER',
+                    'ACCOUNTANT', 'AUDITOR', 'VIEWER'
+                );
+            end if;
+        end
+        $role$;
+        """
+    )
+
     # The application authorization helpers depend on public.profiles. The initial
     # SQLAlchemy metadata migration predates that table, so bootstrap it here when
     # running against a clean PostgreSQL database. On Supabase the table already exists.
