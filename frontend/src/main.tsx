@@ -5,6 +5,7 @@ import './styles.css'
 import './modules.css'
 import './commercial.css'
 import './ux-overrides.css'
+import './motion.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
