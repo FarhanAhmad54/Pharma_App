@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { CheckCircle2, Database, Factory, PackageCheck, Play, RefreshCw, Square, Warehouse, X, Zap } from 'lucide-react'
 import { api, type Batch, type Product, type ProductionOrder, type Sale, type Warehouse as WarehouseType } from './lib/api'
 import { EnterprisePage } from './enterprise'
+import './enterprise.css'
 
 type Notice = (message: string) => void
 
