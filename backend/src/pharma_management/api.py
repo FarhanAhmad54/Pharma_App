@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -48,9 +49,11 @@ from pharma_management.schemas import (
 from pharma_management.security import (
     authenticate_user,
     create_access_token,
+    create_session,
     current_user,
     hash_password,
     require_roles,
+    revoke_session,
 )
 from pharma_management.services import (
     record_qc,
@@ -114,12 +117,21 @@ def register(data: UserCreate, db: Session = Depends(get_db)) -> User:
 
 
 @router.post("/auth/login", response_model=TokenOut)
-def login(data: LoginRequest, db: Session = Depends(get_db)) -> TokenOut:
+def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenOut:
     user = authenticate_user(db, str(data.email), data.password)
     if user is None:
         raise HTTPException(401, "Invalid email or password")
-    token, expires = create_access_token(user)
+    token, expires, jti = create_access_token(user)
+    create_session(db, user, jti, datetime.now(UTC) + timedelta(seconds=expires), request)
     return TokenOut(access_token=token, expires_in=expires, user=UserOut.model_validate(user))
+
+
+@router.post("/auth/logout", status_code=204)
+def logout(request: Request, db: Session = Depends(get_db), _user: User = Depends(current_user)) -> None:
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.lower().startswith("bearer ") else ""
+    if token:
+        revoke_session(db, token)
 
 
 @router.get("/auth/me", response_model=UserOut)
