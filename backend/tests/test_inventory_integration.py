@@ -20,6 +20,7 @@ from pharma_management.models import (
     UserRole,
     Warehouse,
 )
+from pharma_management.operations_api import ExportCreate, create_export
 from pharma_management.schemas import SaleCreate, SaleItemCreate
 
 
@@ -202,6 +203,82 @@ def test_failed_sale_does_not_leak_fefo_reservations() -> None:
                 cleanup.execute(delete(Batch).where(Batch.id == ids["batch"]))
                 cleanup.execute(delete(User).where(User.id == ids["user"]))
                 cleanup.execute(delete(Customer).where(Customer.id == ids["customer"]))
+                cleanup.execute(delete(Product).where(Product.id == ids["product"]))
+                cleanup.execute(delete(Warehouse).where(Warehouse.id == ids["warehouse"]))
+                cleanup.commit()
+        finally:
+            cleanup.close()
+        db.close()
+
+
+def test_export_allocation_updates_authoritative_warehouse_stock() -> None:
+    db = SessionLocal()
+    suffix = uuid4().hex[:8]
+    ids: dict[str, object] = {}
+    try:
+        product = _product(f"EXP-{suffix}")
+        warehouse = Warehouse(code=f"EXP-WH-{suffix}", name="Export Warehouse")
+        user = _user(f"exp-{suffix}")
+        db.add_all([product, warehouse, user])
+        db.flush()
+        batch = Batch(
+            batch_number=f"EXP-B-{suffix}",
+            product_id=product.id,
+            warehouse_id=warehouse.id,
+            manufacturing_date=date.today(),
+            expiry_date=date.today() + timedelta(days=180),
+            quantity_produced=Decimal("100"),
+            quantity_available=Decimal("100"),
+            status=BatchStatus.RELEASED,
+            qc_status=QCStatus.RELEASED,
+        )
+        db.add(batch)
+        db.flush()
+        stock = BatchInventory(
+            batch_id=batch.id,
+            product_id=product.id,
+            warehouse_id=warehouse.id,
+            quantity_available=Decimal("100"),
+            quantity_reserved=Decimal("0"),
+        )
+        db.add(stock)
+        db.flush()
+        db.commit()
+        ids.update(product=product.id, warehouse=warehouse.id, user=user.id, batch=batch.id)
+
+        result = create_export(
+            ExportCreate(
+                export_number=f"EXP-{suffix}",
+                destination_country="IN",
+                importer="Integration Importer",
+                product_id=product.id,
+                batch_id=batch.id,
+                quantity=Decimal("40"),
+                currency="INR",
+                export_value=Decimal("500"),
+            ),
+            db,
+            user,
+        )
+        assert result["export_number"] == f"EXP-{suffix}"
+
+        db.expire_all()
+        current_batch = db.get(Batch, batch.id)
+        current_stock = db.scalar(select(BatchInventory).where(BatchInventory.batch_id == batch.id))
+        assert current_batch is not None and current_batch.quantity_available == Decimal("60")
+        assert current_stock is not None and current_stock.quantity_available == Decimal("60")
+    finally:
+        db.rollback()
+        cleanup = SessionLocal()
+        try:
+            if ids:
+                from pharma_management.models import ExportOrder, InventoryMovement
+
+                cleanup.execute(delete(InventoryMovement).where(InventoryMovement.batch_id == ids["batch"]))
+                cleanup.execute(delete(ExportOrder).where(ExportOrder.batch_id == ids["batch"]))
+                cleanup.execute(delete(BatchInventory).where(BatchInventory.batch_id == ids["batch"]))
+                cleanup.execute(delete(Batch).where(Batch.id == ids["batch"]))
+                cleanup.execute(delete(User).where(User.id == ids["user"]))
                 cleanup.execute(delete(Product).where(Product.id == ids["product"]))
                 cleanup.execute(delete(Warehouse).where(Warehouse.id == ids["warehouse"]))
                 cleanup.commit()
