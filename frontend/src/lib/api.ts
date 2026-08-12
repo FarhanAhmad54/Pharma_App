@@ -16,6 +16,7 @@ export type ProductCreate = { sku: string; brand_name: string; generic_name: str
 export type ProductionCreate = { order_number: string; product_id: string; planned_quantity: number; warehouse_id?: string; notes?: string }
 export type QCRequest = { reference_number: string; test_date: string; result: 'PASSED' | 'FAILED'; notes?: string }
 export type SaleCreate = { order_number: string; customer_id: string; currency: string; items: { product_id: string; quantity: number; unit_price: number }[] }
+export type UserCreate = { email: string; full_name: string; password: string; role: string }
 
 export function setToken(next: string) { token = next; if (next) localStorage.setItem('pharma_access_token', next); else localStorage.removeItem('pharma_access_token') }
 export function getToken() { return token }
@@ -35,6 +36,8 @@ export const api = {
   ready: () => request<{ status: string; database: string }>('/ready'),
   me: () => request<User>('/auth/me'),
   login: (email: string, password: string) => request<{ access_token: string; expires_in: number; user: User }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  register: (data: UserCreate) => request<User>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+  users: () => request<User[]>('/users'),
   products: (search = '') => request<Product[]>(`/products?limit=200${search ? `&search=${encodeURIComponent(search)}` : ''}`),
   createProduct: (data: ProductCreate) => request<Product>('/products', { method: 'POST', body: JSON.stringify(data) }),
   batches: () => request<Batch[]>('/batches'),
@@ -45,6 +48,7 @@ export const api = {
   createSale: (data: SaleCreate, warehouseId: string) => request<Sale>(`/sales?warehouse_id=${encodeURIComponent(warehouseId)}`, { method: 'POST', body: JSON.stringify(data) }),
   inventory: () => request<InventoryRow[]>('/reports/inventory'),
   createProduction: (data: ProductionCreate) => request('/production-orders', { method: 'POST', body: JSON.stringify(data) }),
+  transferStock: (data: { product_id: string; batch_id: string; from_warehouse_id: string; to_warehouse_id: string; quantity: number; reason?: string }) => request<void>('/inventory/transfers', { method: 'POST', body: JSON.stringify(data) }),
   customers: () => request<Customer[]>('/customers'),
   createCustomer: (data: { code: string; name: string; email?: string; phone?: string; address?: string }) => request('/customers', { method: 'POST', body: JSON.stringify(data) }),
   invoices: () => request<Invoice[]>('/invoices'),
