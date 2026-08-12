@@ -13,6 +13,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./ci.db
+      JWT_SECRET: ci-test-secret-do-not-use-in-production
+      ENVIRONMENT: testing
     defaults:
       run:
         working-directory: backend
