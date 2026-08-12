@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from pharma_management.inventory_models import BatchInventory
 from pharma_management.models import (
     AuditLog,
     Batch,
+    BatchAllocation,
     BatchStatus,
     Customer,
     ExportOrder,
@@ -84,6 +85,15 @@ class ShipmentCreate(BaseModel):
     status: ShipmentStatus = ShipmentStatus.PREPARING
     dispatch_date: datetime | None = None
 
+    @field_validator("status", "dispatch_date")
+    @classmethod
+    def validate_initial_state(cls, value: Any, info) -> Any:
+        if info.field_name == "status" and value not in {ShipmentStatus.PREPARING, ShipmentStatus.READY}:
+            raise ValueError("New shipments must start in PREPARING or READY state")
+        if info.field_name == "dispatch_date" and value is not None:
+            raise ValueError("dispatch_date is assigned by the dispatch workflow")
+        return value
+
 
 class ExportCreate(BaseModel):
     export_number: str = Field(min_length=1, max_length=80)
@@ -98,6 +108,15 @@ class ExportCreate(BaseModel):
     shipment_id: UUID | None = None
     export_date: date | None = None
     reference_document: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("destination_country", "currency")
+    @classmethod
+    def normalize_code(cls, value: str, info) -> str:
+        normalized = value.upper()
+        expected = 2 if info.field_name == "destination_country" else 3
+        if len(normalized) != expected or not normalized.isalpha():
+            raise ValueError(f"{info.field_name} must be alphabetic with length {expected}")
+        return normalized
 
 
 @router.post("/suppliers", status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.INVENTORY_MANAGER))])
@@ -153,9 +172,24 @@ def create_return(data: ReturnCreate, db: Session = Depends(get_db), user: User 
     batch = db.scalar(select(Batch).where(Batch.id == data.batch_id).with_for_update())
     if not batch or batch.product_id != data.product_id:
         raise HTTPException(409, "Returned batch does not match product")
-    returned = db.scalar(select(func.coalesce(func.sum(ReturnOrder.quantity), 0)).where(ReturnOrder.invoice_id == data.invoice_id, ReturnOrder.product_id == data.product_id, ReturnOrder.batch_id == data.batch_id)) or Decimal("0")
-    if returned + data.quantity > batch.quantity_sold:
-        raise HTTPException(409, "Return quantity exceeds remaining sold quantity for this batch")
+
+    allocated_to_invoice = db.scalar(
+        select(func.coalesce(func.sum(BatchAllocation.quantity), 0))
+        .join(SalesItem, SalesItem.id == BatchAllocation.sales_item_id)
+        .where(SalesItem.sales_order_id == order.id, SalesItem.product_id == data.product_id, BatchAllocation.batch_id == data.batch_id)
+    ) or Decimal("0")
+    returned = db.scalar(
+        select(func.coalesce(func.sum(ReturnOrder.quantity), 0)).where(
+            ReturnOrder.invoice_id == data.invoice_id,
+            ReturnOrder.product_id == data.product_id,
+            ReturnOrder.batch_id == data.batch_id,
+        )
+    ) or Decimal("0")
+    if allocated_to_invoice <= 0:
+        raise HTTPException(409, "Returned batch was not allocated to this invoice")
+    if returned + data.quantity > allocated_to_invoice:
+        raise HTTPException(409, "Return quantity exceeds the remaining quantity allocated to this invoice and batch")
+
     result = ReturnOrder(**data.model_dump(), created_by=user.id)
     db.add(result)
     db.flush()
@@ -178,7 +212,15 @@ def create_shipment(data: ShipmentCreate, db: Session = Depends(get_db)) -> dict
             raise HTTPException(409, "Shipment can only be created for an ALLOCATED sales order")
     if data.tracking_number and db.scalar(select(Shipment).where(Shipment.tracking_number == data.tracking_number)):
         raise HTTPException(409, "Tracking number already exists")
-    shipment = Shipment(**data.model_dump(exclude={"shipment_number"}), shipment_number=shipment_number)
+    shipment = Shipment(
+        shipment_number=shipment_number,
+        sales_order_id=data.sales_order_id,
+        destination=data.destination,
+        carrier=data.carrier,
+        tracking_number=data.tracking_number,
+        status=data.status,
+        dispatch_date=None,
+    )
     db.add(shipment)
     db.commit()
     db.refresh(shipment)
@@ -208,7 +250,7 @@ def create_export(data: ExportCreate, db: Session = Depends(get_db), user: User 
     if stock.quantity_available < data.quantity or batch.quantity_available < data.quantity:
         raise HTTPException(409, "Insufficient batch stock for export")
     export_payload = data.model_dump(exclude={"warehouse_id"})
-    export_payload.update({"destination_country": data.destination_country.upper(), "currency": data.currency.upper(), "status": "CONFIRMED", "created_by": user.id})
+    export_payload.update({"destination_country": data.destination_country, "currency": data.currency, "status": "CONFIRMED", "created_by": user.id})
     export = ExportOrder(**export_payload)
     stock.quantity_available -= data.quantity
     batch.quantity_available -= data.quantity
