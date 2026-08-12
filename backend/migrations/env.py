@@ -5,8 +5,10 @@ from sqlalchemy import engine_from_config, pool
 
 from pharma_management.config import get_settings
 from pharma_management.db import Base
-from pharma_management import models  # noqa: F401
+from pharma_management import auth_models  # noqa: F401
 from pharma_management import extended_models  # noqa: F401
+from pharma_management import inventory_models  # noqa: F401
+from pharma_management import models  # noqa: F401
 
 config = context.config
 settings = get_settings()
@@ -17,8 +19,20 @@ if config.config_file_name:
 target_metadata = Base.metadata
 
 
+def include_object(object_, name, type_, reflected, compare_to):
+    if type_ == "table" and reflected and name == "profiles":
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
-    context.configure(url=settings.database_url, target_metadata=target_metadata, literal_binds=True, compare_type=True)
+    context.configure(
+        url=settings.database_url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -26,7 +40,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = engine_from_config(config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True, include_object=include_object)
         with context.begin_transaction():
             context.run_migrations()
 
