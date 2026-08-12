@@ -14,6 +14,7 @@ from pharma_management.models import (
     BatchStatus,
     Customer,
     InventoryMovement,
+    Invoice,
     MovementType,
     OrderStatus,
     Product,
@@ -158,15 +159,12 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
     order = SalesOrder(
         order_number=data.order_number,
         customer_id=data.customer_id,
+        warehouse_id=warehouse_id,
         currency=data.currency.upper(),
         created_by=user.id,
     )
     db.add(order)
     db.flush()
-    db.execute(
-        text("update public.sales_orders set warehouse_id = :warehouse_id where id = :order_id"),
-        {"warehouse_id": warehouse_id, "order_id": order.id},
-    )
 
     total = Decimal("0")
     try:
@@ -184,9 +182,7 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
             )
             db.add(item)
             db.flush()
-            allocations = fefo_allocate(
-                db, product.id, warehouse_id, item.quantity, user, order.order_number
-            )
+            allocations = fefo_allocate(db, product.id, warehouse_id, item.quantity, user, order.order_number)
             for batch_id, quantity in allocations:
                 db.execute(
                     text(
@@ -198,8 +194,21 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
                 )
             total += item.quantity * item.unit_price
 
+        order.subtotal = total
+        order.tax_amount = Decimal("0")
         order.total_amount = total
         order.status = OrderStatus.ALLOCATED
+
+        invoice = Invoice(
+            invoice_number=f"INV-{order.order_number}",
+            sales_order_id=order.id,
+            issue_date=date.today(),
+            currency=order.currency,
+            subtotal=total,
+            tax_amount=Decimal("0"),
+            total_amount=total,
+        )
+        db.add(invoice)
         db.commit()
         db.refresh(order)
         return order
@@ -216,7 +225,6 @@ def transfer_stock(db: Session, data: TransferRequest, user: User) -> None:
     if not db.get(Warehouse, data.from_warehouse_id) or not db.get(Warehouse, data.to_warehouse_id):
         raise HTTPException(404, "Source or destination warehouse not found")
 
-    # Lock existing source/destination rows in deterministic warehouse order to reduce deadlock risk.
     existing = db.scalars(
         select(BatchInventory)
         .where(
