@@ -2,7 +2,7 @@
 
 Production-oriented pharmaceutical operations backend built with FastAPI, SQLAlchemy 2.x, PostgreSQL/Supabase, Pydantic 2, Alembic, Typer, pytest, Ruff, and Pyright.
 
-The uploaded architecture plan defines the core lifecycle as **Product → Production → Batch → QC → Inventory → Sales → Shipment/Export → Audit Trail**. The implementation keeps business rules in services/domain logic so API and CLI layers can share the same application behavior. fileciteturn2file0L53-L81
+The uploaded architecture plan defines the core lifecycle as **Product → Production → Batch → QC → Inventory → Sales → Shipment/Export → Audit Trail**. The implementation keeps business rules in services/domain logic so API and CLI layers can share the same application behavior.
 
 ## Implemented backend capabilities
 
@@ -33,12 +33,12 @@ All REST endpoints are under `/api/v1`.
 - `GET /batches`, QC and release actions
 - `POST/GET /customers`
 - `POST/GET /sales`
-- `POST /inventory/transfers`
 - `POST/GET /suppliers`
 - `POST/GET /raw-materials`
 - `POST /returns`
 - `POST/GET /shipments`
 - `POST /exports`
+- `POST /inventory/transfers`
 - `GET /reports/inventory`
 - `GET /audit-logs`
 
