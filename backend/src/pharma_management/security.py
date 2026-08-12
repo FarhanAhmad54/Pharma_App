@@ -13,6 +13,8 @@ from pharma_management.models import User, UserRole
 
 password_hash = PasswordHash.recommended()
 oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+MAX_FAILED_LOGINS = 5
+LOCKOUT_MINUTES = 15
 
 
 def hash_password(password: str) -> str:
@@ -23,17 +25,47 @@ def verify_password(password: str, hashed: str) -> bool:
     return password_hash.verify(password, hashed)
 
 
+def authenticate_user(db: Session, email: str, password: str) -> User | None:
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not user.active:
+        return None
+    now = datetime.now(UTC)
+    if user.locked_until and user.locked_until > now:
+        return None
+    if not verify_password(password, user.password_hash):
+        user.failed_login_attempts += 1
+        if user.failed_login_attempts >= MAX_FAILED_LOGINS:
+            user.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
+            user.failed_login_attempts = 0
+        db.commit()
+        return None
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def create_access_token(user: User) -> tuple[str, int]:
     settings = get_settings()
     expires = timedelta(minutes=settings.access_token_minutes)
     now = datetime.now(UTC)
-    payload = {"sub": str(user.id), "role": user.role.value, "iat": now, "exp": now + expires}
+    payload = {
+        "sub": str(user.id),
+        "role": user.role.value,
+        "iat": now,
+        "exp": now + expires,
+    }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm), int(expires.total_seconds())
 
 
 def current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) -> User:
     settings = get_settings()
-    credentials_error = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         user_id = UUID(str(payload.get("sub")))
@@ -50,4 +82,5 @@ def require_roles(*roles: UserRole):
         if user.role not in roles and user.role != UserRole.SUPER_ADMIN:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
+
     return dependency
