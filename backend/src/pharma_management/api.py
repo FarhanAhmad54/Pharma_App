@@ -46,11 +46,11 @@ from pharma_management.schemas import (
     WarehouseOut,
 )
 from pharma_management.security import (
+    authenticate_user,
     create_access_token,
     current_user,
     hash_password,
     require_roles,
-    verify_password,
 )
 from pharma_management.services import (
     record_qc,
@@ -115,8 +115,8 @@ def register(data: UserCreate, db: Session = Depends(get_db)) -> User:
 
 @router.post("/auth/login", response_model=TokenOut)
 def login(data: LoginRequest, db: Session = Depends(get_db)) -> TokenOut:
-    user = db.scalar(select(User).where(User.email == data.email))
-    if not user or not user.active or not verify_password(data.password, user.password_hash):
+    user = authenticate_user(db, str(data.email), data.password)
+    if user is None:
         raise HTTPException(401, "Invalid email or password")
     token, expires = create_access_token(user)
     return TokenOut(access_token=token, expires_in=expires, user=UserOut.model_validate(user))
