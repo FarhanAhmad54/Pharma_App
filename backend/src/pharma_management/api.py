@@ -9,18 +9,64 @@ from sqlalchemy.orm import Session
 
 from pharma_management.config import get_settings
 from pharma_management.db import get_db
-from pharma_management.models import Batch, Customer, Product, ProductionOrder, ProductionStatus, QCStatus, User, UserRole, Warehouse
-from pharma_management.schemas import (
-    BatchOut, CompleteProductionRequest, LoginRequest, ProductCreate, ProductOut, ProductUpdate,
-    ProductionCreate, ProductionOut, QCRequest, SaleCreate, SaleOut, TokenOut, TransferRequest,
-    UserCreate, UserOut, WarehouseCreate, WarehouseOut,
+from pharma_management.models import (
+    Batch,
+    Customer,
+    Product,
+    ProductionOrder,
+    ProductionStatus,
+    SalesOrder,
+    User,
+    UserRole,
+    Warehouse,
 )
-from pharma_management.security import create_access_token, current_user, hash_password, require_roles, verify_password
-from pharma_management.services import complete_production, create_product, create_production, create_sale, record_qc, release_batch, transfer_stock, transition_production, update_product
+from pharma_management.schemas import (
+    BatchOut,
+    CompleteProductionRequest,
+    LoginRequest,
+    ProductCreate,
+    ProductOut,
+    ProductUpdate,
+    ProductionCreate,
+    ProductionOut,
+    QCRequest,
+    SaleCreate,
+    SaleOut,
+    TokenOut,
+    TransferRequest,
+    UserCreate,
+    UserOut,
+    WarehouseCreate,
+    WarehouseOut,
+)
+from pharma_management.security import (
+    create_access_token,
+    current_user,
+    hash_password,
+    require_roles,
+    verify_password,
+)
+from pharma_management.services import (
+    complete_production,
+    create_product,
+    create_production,
+    create_sale,
+    record_qc,
+    release_batch,
+    transfer_stock,
+    transition_production,
+    update_product,
+)
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0", docs_url="/docs", redoc_url="/redoc")
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 router = APIRouter(prefix="/api/v1")
 
 
