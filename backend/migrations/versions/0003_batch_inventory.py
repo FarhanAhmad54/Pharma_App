@@ -14,6 +14,50 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Fresh PostgreSQL used by CI does not provide Supabase's predefined roles/functions.
+    # Create only the compatibility surface needed by the RLS policies; on Supabase these
+    # objects already exist and are left unchanged where appropriate.
+    op.execute("create schema if not exists auth")
+    op.execute(
+        """
+        do $$
+        begin
+            if not exists (
+                select 1
+                from pg_proc p
+                join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'auth' and p.proname = 'uid' and p.pronargs = 0
+            ) then
+                create function auth.uid() returns uuid language sql stable as $$select null::uuid$$;
+            end if;
+        end $$;
+        """
+    )
+    op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon noinherit; end if; end $$;")
+    op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated noinherit; end if; end $$;")
+    op.execute(
+        """
+        create or replace function public.is_admin() returns boolean
+        language sql stable security definer set search_path = public as $$
+            select exists(
+                select 1 from public.profiles p
+                where p.id = auth.uid() and p.active and p.role in ('SUPER_ADMIN','ADMIN')
+            );
+        $$;
+        """
+    )
+    op.execute(
+        """
+        create or replace function public.has_role(r public.user_role) returns boolean
+        language sql stable security definer set search_path = public as $$
+            select exists(
+                select 1 from public.profiles p
+                where p.id = auth.uid() and p.active and p.role = r
+            );
+        $$;
+        """
+    )
+
     op.create_table(
         "batch_inventory",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -32,8 +76,8 @@ def upgrade() -> None:
     )
     op.create_index("ix_batch_inventory_product_warehouse", "batch_inventory", ["product_id", "warehouse_id"])
     op.create_index("ix_batch_inventory_batch", "batch_inventory", ["batch_id"])
+    op.create_index("ix_batch_inventory_warehouse", "batch_inventory", ["warehouse_id"])
 
-    # Backfill existing batch balances into the authoritative warehouse table.
     op.execute(
         """
         insert into public.batch_inventory
@@ -57,8 +101,8 @@ def upgrade() -> None:
         """
         create policy batch_inventory_write on public.batch_inventory
         for all to authenticated
-        using (is_admin() or has_role('INVENTORY_MANAGER') or has_role('WAREHOUSE_MANAGER'))
-        with check (is_admin() or has_role('INVENTORY_MANAGER') or has_role('WAREHOUSE_MANAGER'))
+        using (public.is_admin() or public.has_role('INVENTORY_MANAGER') or public.has_role('WAREHOUSE_MANAGER'))
+        with check (public.is_admin() or public.has_role('INVENTORY_MANAGER') or public.has_role('WAREHOUSE_MANAGER'))
         """
     )
 
@@ -66,6 +110,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("drop policy if exists batch_inventory_write on public.batch_inventory")
     op.execute("drop policy if exists batch_inventory_read on public.batch_inventory")
+    op.drop_index("ix_batch_inventory_warehouse", table_name="batch_inventory")
     op.drop_index("ix_batch_inventory_batch", table_name="batch_inventory")
     op.drop_index("ix_batch_inventory_product_warehouse", table_name="batch_inventory")
     op.drop_table("batch_inventory")
