@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -75,7 +74,7 @@ def dispatch_shipment(
             )
             .with_for_update()
         )
-        if not batch or not stock:
+        if not item or not batch or not stock:
             raise HTTPException(409, "Allocated batch stock no longer exists")
         if batch.status != BatchStatus.RELEASED:
             raise HTTPException(409, "Allocated batch is no longer released")
