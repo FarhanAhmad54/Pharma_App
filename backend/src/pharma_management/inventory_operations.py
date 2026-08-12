@@ -139,6 +139,7 @@ def fefo_allocate(
         if batch.quantity_available < quantity:
             raise HTTPException(409, "Batch aggregate stock is inconsistent")
         batch.quantity_available -= quantity
+        batch.quantity_reserved += quantity
         allocations.append((stock.batch_id, quantity))
         db.add(
             InventoryMovement(
