@@ -1,14 +1,14 @@
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "Pharma Management API"
     environment: str = "development"
-    database_url: str
-    jwt_secret: str
+    database_url: str = ""
+    jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 30
     log_level: str = "INFO"
@@ -22,6 +22,12 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_required_runtime_settings(self) -> "Settings":
+        if self.environment != "testing" and (not self.database_url or not self.jwt_secret):
+            raise ValueError("DATABASE_URL and JWT_SECRET must be configured outside testing")
+        return self
 
 
 @lru_cache
