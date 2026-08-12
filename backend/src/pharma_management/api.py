@@ -3,13 +3,15 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pharma_management.config import get_settings
 from pharma_management.db import get_db
+from pharma_management.inventory_operations import complete_production, create_sale, transfer_stock
 from pharma_management.models import (
     Batch,
     Customer,
@@ -21,9 +23,12 @@ from pharma_management.models import (
     UserRole,
     Warehouse,
 )
+from pharma_management.observability import RequestContextMiddleware, install_exception_handlers
 from pharma_management.schemas import (
     BatchOut,
     CompleteProductionRequest,
+    CustomerCreate,
+    CustomerOut,
     LoginRequest,
     ProductCreate,
     ProductOut,
@@ -53,23 +58,48 @@ from pharma_management.services import (
     transition_production,
     update_product,
 )
-from pharma_management.inventory_operations import complete_production, create_sale, transfer_stock
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.1.0", docs_url="/docs", redoc_url="/redoc")
+docs_enabled = settings.enable_docs and settings.environment != "production"
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    docs_url="/docs" if docs_enabled else None,
+    redoc_url="/redoc" if docs_enabled else None,
+)
+app.add_middleware(RequestContextMiddleware)
+if settings.trusted_hosts != ["*"]:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    if settings.security_headers:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Cache-Control", "no-store" if request.url.path.startswith("/api/") else "no-cache")
+        if settings.environment == "production":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+install_exception_handlers(app)
 router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "pharma-management-api"}
+    return {"status": "ok", "service": "pharma-management-api", "version": settings.app_version}
 
 
 @router.post("/auth/register", response_model=UserOut, dependencies=[Depends(require_roles(UserRole.SUPER_ADMIN))])
@@ -105,7 +135,7 @@ def product_create(data: ProductCreate, db: Session = Depends(get_db), user: Use
 
 
 @router.get("/products", response_model=list[ProductOut])
-def products(search: str | None = Query(default=None), active: bool | None = None, limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0), db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[Product]:
+def products(search: str | None = Query(default=None, max_length=100), active: bool | None = None, limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0), db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[Product]:
     query = select(Product).order_by(Product.created_at.desc()).offset(offset).limit(limit)
     if active is not None:
         query = query.where(Product.active == active)
@@ -186,7 +216,7 @@ def production_complete(order_id: UUID, data: CompleteProductionRequest, db: Ses
 
 
 @router.get("/batches", response_model=list[BatchOut])
-def batches(status: str | None = None, product_id: UUID | None = None, db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[Batch]:
+def batches(status: str | None = Query(default=None, max_length=40), product_id: UUID | None = None, db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[Batch]:
     query = select(Batch).order_by(Batch.expiry_date.asc())
     if status:
         query = query.where(Batch.status == status)
@@ -219,18 +249,23 @@ def batch_release(batch_id: UUID, db: Session = Depends(get_db), user: User = De
     return release_batch(db, batch, user)
 
 
-@router.post("/customers", status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.SALES_MANAGER))])
-def customer_create(data: dict[str, Any], db: Session = Depends(get_db)) -> dict[str, Any]:
-    required = {"name", "code"}
-    if not required.issubset(data):
-        raise HTTPException(422, "name and code are required")
-    if db.scalar(select(Customer).where(Customer.code == data["code"])):
+@router.post("/customers", response_model=CustomerOut, status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.SALES_MANAGER))])
+def customer_create(data: CustomerCreate, db: Session = Depends(get_db)) -> Customer:
+    if db.scalar(select(Customer).where(Customer.code == data.code)):
         raise HTTPException(409, "Customer code already exists")
-    customer = Customer(**{key: data[key] for key in ("name", "code", "email", "phone", "address") if key in data})
+    customer = Customer(**data.model_dump())
     db.add(customer)
     db.commit()
     db.refresh(customer)
-    return {"id": str(customer.id), "name": customer.name, "code": customer.code, "active": customer.active}
+    return customer
+
+
+@router.get("/customers/{customer_id}", response_model=CustomerOut)
+def customer_get(customer_id: UUID, db: Session = Depends(get_db), _: User = Depends(current_user)) -> Customer:
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    return customer
 
 
 @router.post("/sales", response_model=SaleOut, status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.SALES_MANAGER))])
