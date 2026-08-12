@@ -19,6 +19,16 @@ def _assert_no_violations(table: str, predicate: str, message: str) -> None:
         raise RuntimeError(message)
 
 
+def _add_constraint_if_missing(name: str, table: str, expression: str) -> None:
+    bind = op.get_bind()
+    exists = bind.execute(
+        text("select exists(select 1 from pg_constraint c join pg_class r on r.oid=c.conrelid join pg_namespace n on n.oid=r.relnamespace where n.nspname='public' and r.relname=:table and c.conname=:name)"),
+        {"table": table, "name": name},
+    ).scalar()
+    if not exists:
+        op.execute(f"alter table public.{table} add constraint {name} check ({expression})")
+
+
 def upgrade() -> None:
     _assert_no_violations(
         "batches",
@@ -43,26 +53,30 @@ def upgrade() -> None:
         "Existing sales orders contain negative monetary totals.",
     )
 
-    op.execute(
-        "alter table public.batches add constraint ck_batches_quantities_nonnegative "
-        "check (quantity_produced >= 0 and quantity_available >= 0 and quantity_reserved >= 0 "
-        "and quantity_sold >= 0 and quantity_rejected >= 0)"
+    _add_constraint_if_missing(
+        "ck_batches_quantities_nonnegative",
+        "batches",
+        "quantity_produced >= 0 and quantity_available >= 0 and quantity_reserved >= 0 and quantity_sold >= 0 and quantity_rejected >= 0",
     )
-    op.execute(
-        "alter table public.batches add constraint ck_batches_quantity_conservation "
-        "check (quantity_available + quantity_reserved + quantity_sold + quantity_rejected <= quantity_produced)"
+    _add_constraint_if_missing(
+        "ck_batches_quantity_conservation",
+        "batches",
+        "quantity_available + quantity_reserved + quantity_sold + quantity_rejected <= quantity_produced",
     )
-    op.execute(
-        "alter table public.batch_inventory add constraint ck_batch_inventory_quantities_nonnegative "
-        "check (quantity_available >= 0 and quantity_reserved >= 0)"
+    _add_constraint_if_missing(
+        "ck_batch_inventory_quantities_nonnegative",
+        "batch_inventory",
+        "quantity_available >= 0 and quantity_reserved >= 0",
     )
-    op.execute(
-        "alter table public.production_orders add constraint ck_production_quantities "
-        "check (planned_quantity > 0 and actual_quantity >= 0 and actual_quantity <= planned_quantity)"
+    _add_constraint_if_missing(
+        "ck_production_quantities",
+        "production_orders",
+        "planned_quantity > 0 and actual_quantity >= 0 and actual_quantity <= planned_quantity",
     )
-    op.execute(
-        "alter table public.sales_orders add constraint ck_sales_totals_nonnegative "
-        "check (subtotal >= 0 and tax_amount >= 0 and total_amount >= 0)"
+    _add_constraint_if_missing(
+        "ck_sales_totals_nonnegative",
+        "sales_orders",
+        "subtotal >= 0 and tax_amount >= 0 and total_amount >= 0",
     )
 
 
