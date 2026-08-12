@@ -212,7 +212,7 @@ def test_export_allocation_updates_authoritative_warehouse_stock() -> None:
                 cleanup.execute(delete(ExportOrder).where(ExportOrder.batch_id == ids["batch"]))
                 cleanup.execute(delete(BatchInventory).where(BatchInventory.batch_id == ids["batch"]))
                 cleanup.execute(delete(Batch).where(Batch.id == ids["batch"]))
-                cleanup.execute(delete(User).where(User.id == ids["user"]))
+                # Audit lineage is intentionally retained; production users are deactivated rather than hard-deleted.
                 cleanup.execute(delete(Product).where(Product.id == ids["product"]))
                 cleanup.execute(delete(Warehouse).where(Warehouse.id == ids["warehouse"]))
                 cleanup.commit()
