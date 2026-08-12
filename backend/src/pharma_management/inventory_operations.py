@@ -34,12 +34,8 @@ def complete_production(db: Session, order: ProductionOrder, data: CompleteProdu
         raise HTTPException(409, "Production order must be IN_PROGRESS")
     if db.scalar(select(Batch).where(Batch.batch_number == data.batch_number)):
         raise HTTPException(409, "Batch number already exists")
-    if data.actual_quantity <= 0:
-        raise HTTPException(422, "Actual quantity must be positive")
     if data.actual_quantity > order.planned_quantity:
         raise HTTPException(422, "Actual quantity cannot exceed planned quantity")
-    if data.expiry_date <= data.manufacturing_date:
-        raise HTTPException(422, "Expiry date must be after manufacturing date")
     if not order.warehouse_id:
         raise HTTPException(409, "Production order must have a destination warehouse")
     if not db.get(Warehouse, order.warehouse_id):
@@ -121,6 +117,14 @@ def fefo_allocate(
         .with_for_update()
     ).all()
 
+    if not rows:
+        raise HTTPException(409, "Insufficient eligible released stock")
+
+    batch_ids = [row.batch_id for row in rows]
+    locked_batches = {
+        batch.id: batch
+        for batch in db.scalars(select(Batch).where(Batch.id.in_(batch_ids)).with_for_update()).all()
+    }
     total_available = sum((row.quantity_available for row in rows), Decimal("0"))
     if total_available < requested:
         raise HTTPException(409, "Insufficient eligible released stock")
@@ -131,13 +135,13 @@ def fefo_allocate(
         if remaining <= 0:
             break
         quantity = min(stock.quantity_available, remaining)
-        stock.quantity_available -= quantity
-        stock.quantity_reserved += quantity
-        batch = db.get(Batch, stock.batch_id)
+        batch = locked_batches.get(stock.batch_id)
         if not batch:
             raise HTTPException(409, "Batch record no longer exists")
         if batch.quantity_available < quantity:
             raise HTTPException(409, "Batch aggregate stock is inconsistent")
+        stock.quantity_available -= quantity
+        stock.quantity_reserved += quantity
         batch.quantity_available -= quantity
         batch.quantity_reserved += quantity
         allocations.append((stock.batch_id, quantity))
@@ -155,6 +159,8 @@ def fefo_allocate(
         )
         remaining -= quantity
 
+    if remaining != 0:
+        raise HTTPException(409, "FEFO allocation could not satisfy the requested quantity")
     return allocations
 
 
@@ -165,8 +171,6 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
     warehouse = db.get(Warehouse, warehouse_id)
     if not warehouse or not warehouse.active:
         raise HTTPException(404, "Warehouse not found or inactive")
-    if not data.items:
-        raise HTTPException(422, "A sales order must contain at least one item")
     if db.scalar(select(SalesOrder).where(SalesOrder.order_number == data.order_number)):
         raise HTTPException(409, "Sales order number already exists")
 
@@ -174,7 +178,7 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
         order_number=data.order_number,
         customer_id=data.customer_id,
         warehouse_id=warehouse_id,
-        currency=data.currency.upper(),
+        currency=data.currency,
         created_by=user.id,
     )
     db.add(order)
@@ -210,17 +214,17 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
         order.tax_amount = Decimal("0")
         order.total_amount = total
         order.status = OrderStatus.ALLOCATED
-
-        invoice = Invoice(
-            invoice_number=f"INV-{order.order_number}",
-            sales_order_id=order.id,
-            issue_date=date.today(),
-            currency=order.currency,
-            subtotal=total,
-            tax_amount=Decimal("0"),
-            total_amount=total,
+        db.add(
+            Invoice(
+                invoice_number=f"INV-{order.order_number}",
+                sales_order_id=order.id,
+                issue_date=date.today(),
+                currency=order.currency,
+                subtotal=total,
+                tax_amount=Decimal("0"),
+                total_amount=total,
+            )
         )
-        db.add(invoice)
         db.commit()
         db.refresh(order)
         return order
@@ -230,10 +234,6 @@ def create_sale(db: Session, data: SaleCreate, warehouse_id: UUID, user: User) -
 
 
 def transfer_stock(db: Session, data: TransferRequest, user: User) -> None:
-    if data.from_warehouse_id == data.to_warehouse_id:
-        raise HTTPException(422, "Source and destination warehouses must differ")
-    if data.quantity <= 0:
-        raise HTTPException(422, "Transfer quantity must be positive")
     source_warehouse = db.get(Warehouse, data.from_warehouse_id)
     destination_warehouse = db.get(Warehouse, data.to_warehouse_id)
     if not source_warehouse or not destination_warehouse or not source_warehouse.active or not destination_warehouse.active:
@@ -277,26 +277,26 @@ def transfer_stock(db: Session, data: TransferRequest, user: User) -> None:
     source.quantity_available -= data.quantity
     destination.quantity_available += data.quantity
 
-    db.add(
-        InventoryMovement(
-            product_id=data.product_id,
-            batch_id=data.batch_id,
-            warehouse_id=data.from_warehouse_id,
-            quantity=-data.quantity,
-            movement_type=MovementType.TRANSFER_OUT,
-            user_id=user.id,
-            reason=data.reason,
-        )
-    )
-    db.add(
-        InventoryMovement(
-            product_id=data.product_id,
-            batch_id=data.batch_id,
-            warehouse_id=data.to_warehouse_id,
-            quantity=data.quantity,
-            movement_type=MovementType.TRANSFER_IN,
-            user_id=user.id,
-            reason=data.reason,
-        )
+    db.add_all(
+        [
+            InventoryMovement(
+                product_id=data.product_id,
+                batch_id=data.batch_id,
+                warehouse_id=data.from_warehouse_id,
+                quantity=-data.quantity,
+                movement_type=MovementType.TRANSFER_OUT,
+                user_id=user.id,
+                reason=data.reason,
+            ),
+            InventoryMovement(
+                product_id=data.product_id,
+                batch_id=data.batch_id,
+                warehouse_id=data.to_warehouse_id,
+                quantity=data.quantity,
+                movement_type=MovementType.TRANSFER_IN,
+                user_id=user.id,
+                reason=data.reason,
+            ),
+        ]
     )
     db.commit()
