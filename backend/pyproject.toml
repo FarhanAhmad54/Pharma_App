@@ -37,7 +37,10 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+ target-version = "py312"
+
+[tool.ruff.lint]
+select = ["F"]
 
 [tool.pyright]
 include = ["src", "tests"]
