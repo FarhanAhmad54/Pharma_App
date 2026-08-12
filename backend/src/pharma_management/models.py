@@ -97,14 +97,18 @@ class Product(Base):
     generic_name: Mapped[str] = mapped_column(String(160), nullable=False)
     strength: Mapped[str | None] = mapped_column(String(80))
     dosage_form: Mapped[str] = mapped_column(String(80), nullable=False)
+    route_of_administration: Mapped[str | None] = mapped_column(String(80))
     route: Mapped[str | None] = mapped_column(String(80))
     category: Mapped[str | None] = mapped_column(String(100))
     manufacturer: Mapped[str | None] = mapped_column(String(160))
+    unit_of_measure: Mapped[str] = mapped_column(String(32), nullable=False, default="unit")
     unit: Mapped[str] = mapped_column(String(32), nullable=False, default="unit")
+    packaging_configuration: Mapped[str | None] = mapped_column(String(160))
     packaging: Mapped[str | None] = mapped_column(String(160))
     selling_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
     cost_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
     reorder_threshold: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=Decimal("0"))
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="ACTIVE")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -129,14 +133,19 @@ class ProductionOrder(Base):
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False)
     planned_quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False)
     actual_quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False, default=Decimal("0"))
+    production_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    production_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    facility: Mapped[str | None] = mapped_column(Text)
     warehouse_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("warehouses.id"))
     status: Mapped[ProductionStatus] = mapped_column(Enum(ProductionStatus), default=ProductionStatus.DRAFT, nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    production_notes: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     approved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class Batch(Base):
@@ -167,6 +176,8 @@ class QCRecord(Base):
     reference_number: Mapped[str] = mapped_column(String(80), nullable=False)
     test_date: Mapped[date] = mapped_column(Date, nullable=False)
     tester_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[QCStatus] = mapped_column(Enum(QCStatus), default=QCStatus.PENDING, nullable=False)
+    result_status: Mapped[str | None] = mapped_column(Text)
     result: Mapped[QCStatus] = mapped_column(Enum(QCStatus), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
@@ -205,11 +216,15 @@ class SalesOrder(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_number: Mapped[str] = mapped_column(String(64), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("warehouses.id"), nullable=False)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.DRAFT, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(16, 4), default=Decimal("0"), nullable=False)
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(16, 4), default=Decimal("0"), nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(16, 4), default=Decimal("0"), nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class SalesItem(Base):
@@ -219,6 +234,7 @@ class SalesItem(Base):
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    line_total: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
 
 
 class BatchAllocation(Base):
@@ -227,34 +243,71 @@ class BatchAllocation(Base):
     sales_item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sales_items.id", ondelete="CASCADE"), nullable=False)
     batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("batches.id"), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    invoice_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    sales_order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sales_orders.id"), nullable=False, unique=True)
+    issue_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Shipment(Base):
     __tablename__ = "shipments"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shipment_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     sales_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sales_orders.id"))
     destination: Mapped[str] = mapped_column(Text, nullable=False)
     carrier: Mapped[str | None] = mapped_column(String(120))
     tracking_number: Mapped[str | None] = mapped_column(String(120), unique=True)
+    dispatch_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[ShipmentStatus] = mapped_column(Enum(ShipmentStatus), default=ShipmentStatus.PREPARING, nullable=False)
-    dispatch_date: Mapped[date | None] = mapped_column(Date)
-    delivery_date: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class ExportOrder(Base):
     __tablename__ = "export_orders"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    reference_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    export_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     destination_country: Mapped[str] = mapped_column(String(2), nullable=False)
     importer: Mapped[str] = mapped_column(String(180), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    export_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    export_date: Mapped[date | None] = mapped_column(Date)
+    shipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("shipments.id"))
+    status: Mapped[str] = mapped_column(String(40), default="DRAFT", nullable=False)
+    reference_document: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("batches.id"), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+
+
+class ShipmentItem(Base):
+    __tablename__ = "shipment_items"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False)
     batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("batches.id"), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False)
-    export_value: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
-    shipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("shipments.id"))
-    export_date: Mapped[date | None] = mapped_column(Date)
-    status: Mapped[str] = mapped_column(String(40), default="DRAFT", nullable=False)
+
+
+class ExportItem(Base):
+    __tablename__ = "export_items"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    export_order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("export_orders.id", ondelete="CASCADE"), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("batches.id"), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False)
 
 
 class User(Base):
