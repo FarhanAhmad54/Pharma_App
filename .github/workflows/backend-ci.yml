@@ -31,6 +31,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg://pharma:pharma@localhost:5432/pharma_ci
       JWT_SECRET: ci-test-secret-do-not-use-in-production
       ENVIRONMENT: testing
+      ENABLE_DOCS: true
     defaults:
       run:
         working-directory: backend
@@ -43,6 +44,8 @@ jobs:
       - run: pip install '.[dev]'
       - run: ruff check src tests
       - run: pyright src tests
+      - run: bandit -q -r src -x tests
+      - run: pip-audit
       - run: alembic upgrade head
       - run: pytest -q
       - name: Build container image
