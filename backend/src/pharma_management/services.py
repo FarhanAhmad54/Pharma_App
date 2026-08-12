@@ -12,13 +12,13 @@ from pharma_management.models import (
     AuditLog,
     Batch,
     BatchStatus,
-    Customer,
     QCRecord,
     QCStatus,
     Product,
     ProductionOrder,
     ProductionStatus,
     User,
+    UserRole,
     Warehouse,
 )
 from pharma_management.schemas import ProductCreate, ProductUpdate
@@ -39,6 +39,7 @@ def audit(
             user_id=user_id,
             action=action,
             entity=entity,
+            entity_type=entity,
             entity_id=entity_id,
             old_value=old,
             new_value=new,
