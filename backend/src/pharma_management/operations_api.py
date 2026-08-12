@@ -201,13 +201,16 @@ def create_export(data: ExportCreate, db: Session = Depends(get_db), user: User 
     if batch.quantity_available < data.quantity:
         raise HTTPException(409, "Insufficient batch quantity")
 
-    export = ExportOrder(
-        **data.model_dump(),
-        destination_country=data.destination_country.upper(),
-        currency=data.currency.upper(),
-        status="CONFIRMED",
-        created_by=user.id,
+    export_payload = data.model_dump()
+    export_payload.update(
+        {
+            "destination_country": data.destination_country.upper(),
+            "currency": data.currency.upper(),
+            "status": "CONFIRMED",
+            "created_by": user.id,
+        }
     )
+    export = ExportOrder(**export_payload)
     stock.quantity_available -= data.quantity
     batch.quantity_available -= data.quantity
     db.add(export)
