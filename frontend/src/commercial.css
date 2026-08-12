@@ -1,0 +1,2 @@
+.commercial-register{margin-top:18px}.commercial-register .panel{overflow:hidden}.commercial-action-row{display:flex;flex-wrap:wrap;gap:10px}
+@media(max-width:760px){.commercial-action-row{display:grid;grid-template-columns:1fr}.commercial-action-row .primary-btn,.commercial-action-row .secondary-btn{width:100%;justify-content:center}}
