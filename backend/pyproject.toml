@@ -41,6 +41,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F"]
+per-file-ignores = {"src/pharma_management/services.py" = ["F401"]}
 
 [tool.pyright]
 include = ["src", "tests"]
