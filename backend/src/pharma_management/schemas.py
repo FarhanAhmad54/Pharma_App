@@ -123,6 +123,8 @@ class CompleteProductionRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "CompleteProductionRequest":
+        if self.manufacturing_date > date.today():
+            raise ValueError("manufacturing_date cannot be in the future")
         if self.expiry_date <= self.manufacturing_date:
             raise ValueError("expiry_date must be after manufacturing_date")
         return self
@@ -133,6 +135,13 @@ class QCRequest(BaseModel):
     test_date: date
     result: QCStatus
     notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("test_date")
+    @classmethod
+    def validate_test_date(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("test_date cannot be in the future")
+        return value
 
 
 class SaleItemCreate(BaseModel):
@@ -151,7 +160,7 @@ class SaleCreate(BaseModel):
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         normalized = value.upper()
-        if not normalized.isalpha():
+        if len(normalized) != 3 or not normalized.isalpha():
             raise ValueError("currency must be a 3-letter ISO-style code")
         return normalized
 
