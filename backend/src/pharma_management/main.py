@@ -1,6 +1,12 @@
-from pharma_management.api import app
-from pharma_management.operations_api import router as operations_router
+from pharma_management import api
+from pharma_management.inventory_operations import complete_production, create_sale, transfer_stock
 
-app.include_router(operations_router, prefix="/api/v1")
+# Replace legacy single-warehouse implementations with the transactional,
+# warehouse-specific inventory operations before the application is served.
+api.complete_production = complete_production
+api.create_sale = create_sale
+api.transfer_stock = transfer_stock
+
+app = api.app
 
 __all__ = ["app"]
