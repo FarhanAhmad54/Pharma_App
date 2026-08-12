@@ -46,9 +46,9 @@ jobs:
       - run: pyright src tests
       - run: bandit -q -r src -x tests
       - run: pip-audit
+      - run: alembic upgrade head
       - name: Verify Alembic model/migration parity
         run: alembic check
-      - run: alembic upgrade head
       - run: pytest -q
       - name: Build container image
         run: docker build --tag pharma-management-api:ci .
