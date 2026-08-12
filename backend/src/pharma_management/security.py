@@ -1,12 +1,14 @@
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pharma_management.auth_models import AuthSession
 from pharma_management.config import get_settings
 from pharma_management.db import get_db
 from pharma_management.models import User, UserRole
@@ -26,7 +28,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
-    user = db.query(User).filter(User.email == email).first()
+    user = db.scalar(select(User).where(User.email == email))
     if not user or not user.active:
         return None
     now = datetime.now(UTC)
@@ -46,17 +48,33 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
     return user
 
 
-def create_access_token(user: User) -> tuple[str, int]:
+def create_access_token(user: User) -> tuple[str, int, str]:
     settings = get_settings()
     expires = timedelta(minutes=settings.access_token_minutes)
     now = datetime.now(UTC)
+    jti = uuid4().hex
     payload = {
         "sub": str(user.id),
         "role": user.role.value,
         "iat": now,
         "exp": now + expires,
+        "jti": jti,
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm), int(expires.total_seconds())
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return token, int(expires.total_seconds()), jti
+
+
+def create_session(db: Session, user: User, jti: str, expires_at: datetime, request: Request | None = None) -> None:
+    db.add(
+        AuthSession(
+            user_id=user.id,
+            jti=jti,
+            expires_at=expires_at,
+            ip_address=request.client.host if request and request.client else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+    )
+    db.commit()
 
 
 def current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) -> User:
@@ -69,12 +87,35 @@ def current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) ->
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         user_id = UUID(str(payload.get("sub")))
+        jti = str(payload.get("jti"))
     except (jwt.PyJWTError, ValueError, TypeError) as exc:
         raise credentials_error from exc
+    session = db.scalar(
+        select(AuthSession).where(
+            AuthSession.jti == jti,
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > datetime.now(UTC),
+        )
+    )
+    if not session or session.user_id != user_id:
+        raise credentials_error
     user = db.get(User, user_id)
     if not user or not user.active:
         raise credentials_error
     return user
+
+
+def revoke_session(db: Session, token: str) -> None:
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        jti = str(payload.get("jti"))
+    except (jwt.PyJWTError, ValueError, TypeError):
+        return
+    session = db.scalar(select(AuthSession).where(AuthSession.jti == jti, AuthSession.revoked_at.is_(None)))
+    if session:
+        session.revoked_at = datetime.now(UTC)
+        db.commit()
 
 
 def require_roles(*roles: UserRole):
