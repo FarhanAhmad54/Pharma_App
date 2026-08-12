@@ -20,7 +20,7 @@ def upgrade() -> None:
     op.execute("create schema if not exists auth")
     op.execute(
         """
-        do $$
+        do $do$
         begin
             if not exists (
                 select 1
@@ -28,9 +28,10 @@ def upgrade() -> None:
                 join pg_namespace n on n.oid = p.pronamespace
                 where n.nspname = 'auth' and p.proname = 'uid' and p.pronargs = 0
             ) then
-                create function auth.uid() returns uuid language sql stable as $$select null::uuid$$;
+                create function auth.uid() returns uuid language sql stable as $fn$select null::uuid$fn$;
             end if;
-        end $$;
+        end
+        $do$;
         """
     )
     op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon noinherit; end if; end $$;")
