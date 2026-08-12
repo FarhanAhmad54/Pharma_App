@@ -14,15 +14,15 @@ def test_health_endpoint() -> None:
     assert response.headers["X-Request-ID"]
 
 
-def test_readiness_endpoint_uses_postgres() -> None:
+def test_readiness_endpoint_uses_postgres_and_reports_migration() -> None:
     client = TestClient(app)
     response = client.get("/api/v1/ready")
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ready",
-        "service": "pharma-management-api",
-        "database": "ok",
-    }
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["service"] == "pharma-management-api"
+    assert payload["database"] == "ok"
+    assert payload["migration"]
     assert response.headers["X-Request-ID"]
 
 
