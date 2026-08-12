@@ -88,6 +88,9 @@ class UserRole(str, enum.Enum):
     VIEWER = "VIEWER"
 
 
+# Model declarations below remain compatible with the existing schema; only the
+# security-relevant User and AuditLog columns are extended here.
+
 class Product(Base):
     __tablename__ = "products"
     __table_args__ = (UniqueConstraint("sku", name="uq_products_sku"), Index("ix_products_generic_name", "generic_name"))
@@ -234,11 +237,7 @@ class SalesItem(Base):
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
-    line_total: Mapped[Decimal | None] = mapped_column(
-        Numeric(18, 4),
-        Computed("quantity * unit_price", persisted=True),
-        nullable=True,
-    )
+    line_total: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), Computed("quantity * unit_price", persisted=True), nullable=True)
 
 
 class BatchAllocation(Base):
@@ -323,6 +322,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.VIEWER, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    failed_login_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -332,6 +333,7 @@ class AuditLog(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     entity: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False, default="UNKNOWN")
     entity_id: Mapped[str] = mapped_column(String(100), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     old_value: Mapped[str | None] = mapped_column(Text)
