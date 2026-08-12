@@ -36,6 +36,30 @@ def upgrade() -> None:
     )
     op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon noinherit; end if; end $$;")
     op.execute("do $$ begin if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated noinherit; end if; end $$;")
+
+    # The application authorization helpers depend on public.profiles. The initial
+    # SQLAlchemy metadata migration predates that table, so bootstrap it here when
+    # running against a clean PostgreSQL database. On Supabase the table already exists.
+    op.execute(
+        """
+        do $profile$
+        begin
+            if to_regclass('public.profiles') is null then
+                create table public.profiles (
+                    id uuid primary key,
+                    email text not null,
+                    full_name text not null,
+                    role public.user_role not null default 'VIEWER',
+                    active boolean not null default true,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+            end if;
+        end
+        $profile$;
+        """
+    )
+
     op.execute(
         """
         create or replace function public.is_admin() returns boolean
