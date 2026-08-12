@@ -1,11 +1,11 @@
 """lock down auth sessions and audit trigger function search path
 
-Revision ID: 0010_lockdown_auth_sessions_and_audit_function
+Revision ID: 0010_security_lockdown
 Revises: 0009_audit_user_set_null
 """
 from alembic import op
 
-revision = "0010_lockdown_auth_sessions_and_audit_function"
+revision = "0010_security_lockdown"
 down_revision = "0009_audit_user_set_null"
 branch_labels = None
 depends_on = None
