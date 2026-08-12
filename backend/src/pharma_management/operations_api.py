@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ from pharma_management.models import (
     Customer,
     ExportOrder,
     InventoryMovement,
+    Invoice,
     MovementType,
     Shipment,
     ShipmentStatus,
@@ -126,19 +127,27 @@ def list_raw_materials(db: Session = Depends(get_db), _: User = Depends(current_
 def create_return(data: ReturnCreate, db: Session = Depends(get_db), user: User = Depends(current_user)) -> ReturnOrder:
     if db.scalar(select(ReturnOrder).where(ReturnOrder.return_number == data.return_number)):
         raise HTTPException(409, "Return number already exists")
-    if not db.get(Customer, data.customer_id) or not db.get(data.invoice_id.__class__, data.invoice_id):
-        pass
+    if not db.get(Customer, data.customer_id):
+        raise HTTPException(404, "Customer not found")
+    invoice = db.get(Invoice, data.invoice_id)
+    if not invoice:
+        raise HTTPException(404, "Invoice not found")
     batch = db.scalar(select(Batch).where(Batch.id == data.batch_id).with_for_update())
     if not batch or batch.product_id != data.product_id:
         raise HTTPException(409, "Returned batch does not match product")
     if data.quantity > batch.quantity_sold:
         raise HTTPException(409, "Return quantity exceeds quantity sold from batch")
-    if not batch.warehouse_id:
-        raise HTTPException(409, "Returned batch has no warehouse assignment")
     result = ReturnOrder(**data.model_dump(), created_by=user.id)
     db.add(result)
-    audit = AuditLog(user_id=user.id, action="RETURN_RECEIVED", entity="Return", entity_id=str(result.id), reason="Return received; held for inspection")
-    db.add(audit)
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="RETURN_RECEIVED",
+            entity="Return",
+            entity_id=str(result.id),
+            reason="Return received; held for inspection",
+        )
+    )
     db.commit()
     db.refresh(result)
     return result
@@ -146,9 +155,11 @@ def create_return(data: ReturnCreate, db: Session = Depends(get_db), user: User 
 
 @router.post("/shipments", status_code=201, dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.SALES_MANAGER))])
 def create_shipment(data: ShipmentCreate, db: Session = Depends(get_db)) -> Shipment:
-    shipment_number = data.shipment_number or f"SHP-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{UUID(int=0).hex[:6].upper()}"
+    shipment_number = data.shipment_number or f"SHP-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:8].upper()}"
     if db.scalar(select(Shipment).where(Shipment.shipment_number == shipment_number)):
         raise HTTPException(409, "Shipment number already exists")
+    if data.sales_order_id and not db.execute(select(1).where(__import__('pharma_management.models', fromlist=['SalesOrder']).SalesOrder.id == data.sales_order_id)).first():
+        raise HTTPException(404, "Sales order not found")
     if data.tracking_number and db.scalar(select(Shipment).where(Shipment.tracking_number == data.tracking_number)):
         raise HTTPException(409, "Tracking number already exists")
     shipment = Shipment(**data.model_dump(exclude={"shipment_number"}), shipment_number=shipment_number)
