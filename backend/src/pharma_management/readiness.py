@@ -13,6 +13,14 @@ router = APIRouter(prefix="/api/v1")
 def readiness(db: Session = Depends(get_db)) -> dict[str, str]:
     try:
         db.execute(text("select 1"))
+        revision = db.execute(text("select version_num from alembic_version limit 1")).scalar_one_or_none()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
-    return {"status": "ready", "service": "pharma-management-api", "database": "ok"}
+    if not revision:
+        raise HTTPException(status_code=503, detail="Database migration state unavailable")
+    return {
+        "status": "ready",
+        "service": "pharma-management-api",
+        "database": "ok",
+        "migration": str(revision),
+    }
