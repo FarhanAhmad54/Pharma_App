@@ -64,6 +64,8 @@ def dispatch_shipment(
 
     for allocation in allocations:
         item = db.get(SalesItem, allocation.sales_item_id)
+        if not item:
+            raise HTTPException(409, "Allocated sales item no longer exists")
         batch = db.scalar(select(Batch).where(Batch.id == allocation.batch_id).with_for_update())
         stock = db.scalar(
             select(BatchInventory)
@@ -74,7 +76,7 @@ def dispatch_shipment(
             )
             .with_for_update()
         )
-        if not item or not batch or not stock:
+        if not batch or not stock:
             raise HTTPException(409, "Allocated batch stock no longer exists")
         if batch.status != BatchStatus.RELEASED:
             raise HTTPException(409, "Allocated batch is no longer released")
